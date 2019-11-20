@@ -45,8 +45,8 @@ type Response struct {
 	MemberOf       []string `json:"memberOf"`
 }
 
-// CustomLDAPSearch ...
-func CustomLDAPSearch(subjectID string) ([]string, error) {
+// ExampleLDAPSearch ...
+func ExampleLDAPSearch(subjectID string) ([]string, error) {
 
 	var (
 		acceptedUserGroups = []string{
