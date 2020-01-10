@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"lr-admin-portal/src/go/services"
 	"net/http"
 	"os"
 	"strings"
@@ -141,7 +140,7 @@ func makeAPIRequest(method string, url string, requestBody []byte, auth string) 
 		req.Header.Add(`Authorization`, `Basic `+auth)
 	}
 	req.Header.Add(`Content-Type`, `application/json`)
-	client := services.NewClient()
+	client := NewClient()
 	response, err := client.Do(req)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
