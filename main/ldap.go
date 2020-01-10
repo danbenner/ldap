@@ -1,147 +1,109 @@
-package main
+package ldap
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
+	"log"
+	"lr-admin-portal/src/go/services"
+	"net/http"
 	"os"
 	"strings"
-
-	ldap "github.com/go-ldap/ldap"
 )
 
-var (
-	serviceAccountID   = ""
-	serviceAccountPASS = ""
-	ldapServerName     = ""
-	baseDomainName     = "MUST CHANGE"
-)
+/*
+	LDAP ...
+		- init():
+			- initialize with simple PING test to LDAP server
+		- LDAP():
+			- initialize env vars
+			- create request body for POST to LDAP server
+			- make request, then unmarshal into []Response, then return
+		- parseResponseOfMemberOfRoles()
+		- doesArrayXContainAnyStringsInArrayY()
+		- makeAPIRequest()
+		- CustomLDAPSearch():
+			- search, parse roles, find matches
+		- pingLDAPAPI()
+			- for testing and initialization
 
-func init() {
-	serviceAccountID := os.Getenv("SERVICE_ACCOUNT_ID")
-	serviceAccountPASS := os.Getenv("SERVICE_ACCOUNT_PASS")
-	ldapServerName := os.Getenv("LDAP_SERVER_NAME")
-	baseDomainName := "MUST CHANGE"
-	switch {
-	case serviceAccountID == "":
-		fmt.Printf("ERROR: Failed to initialize LDAP; serviceAccountID invalid\n")
-	case serviceAccountPASS == "":
-		fmt.Printf("ERROR: Failed to initialize LDAP; serviceAccountPASS invalid\n")
-	case ldapServerName == "":
-		fmt.Printf("ERROR: Failed to initialize LDAP; ldapServerName invalid\n")
-	}
-	err := pingLDAPServer(ldapServerName, serviceAccountID, serviceAccountPASS, baseDomainName)
-	if err != nil {
-		fmt.Printf("%v\n", err.Error())
-	} else {
-		fmt.Printf("LDAP Successfully initialized ...\n")
-	}
+		* NOTE: The CustomLDAPSearch relies on 'acceptedUserGroups' being correctly populated
+*/
+
+type searchFilter struct {
+	Filter     string   `json:"filter"`
+	Attributes []string `json:"attributes"`
+	SizeLimit  int      `json:"sizeLimit"`
+	DN         string   `json:"dn"`
 }
 
 // Response ...
 type Response struct {
-	CN             string   `json:"cn"`
-	SAMAccountName string   `json:"sAMAccountName"`
-	Mail           string   `json:"mail"`
-	MemberOf       []string `json:"memberOf"`
+	DN       string   `json:"dn"`
+	Controls []string `json:"controls"`
+	CN       string   `json:"cn"`
+	MemberOf []string `json:"memberOf"`
 }
 
-// ExampleLDAPSearch ...
-func ExampleLDAPSearch(subjectID string) ([]string, error) {
-
-	var (
-		acceptedUserGroups = []string{
-			"groupA",
-			"groupB",
-		}
-	)
-
-	// SEARCH
-	response, err := LDAP(ldapServerName, serviceAccountID, serviceAccountPASS, baseDomainName, subjectID)
-	if err != nil {
-		return nil, err
-	}
-	// PARSE ROLES
-	adGroups, err := parseMemberOfRoles(response)
-	if err != nil {
-		return nil, err
-	}
-	// ALLOWED MATCHES
-	matches := doesArrayXContainAnyStringsInArrayY(adGroups, acceptedUserGroups)
-
-	return matches, nil
+type message struct {
+	Responses []Response `json:"message"`
 }
 
-// LDAP (Lightweight Directory Access Protocol) ..
-// - requires: service account ID and Password and subject ID
-func LDAP(serverName string, serviceAccountID string, serviceAccountPASS string, baseDomainName string, subjectID string) ([]Response, error) {
-
-	// CREATE CONNECTION
-	ldapConnection, err := ldap.Dial("tcp", fmt.Sprintf("%s:%d", serverName, 389))
+func init() {
+	status, err := pingLDAPAPI()
 	if err != nil {
-		return nil, err
+		log.Printf("STATUS: %v, ERROR: %v\n", status, err.Error())
+	} else {
+		log.Printf("LDAP Successfully initialized ...\n")
 	}
-	defer ldapConnection.Close()
+}
 
-	// BIND (AUTHORIZED) SERVICE ACCOUNT
-	err = ldapConnection.Bind(serviceAccountID+"@"+baseDomainName+".com", serviceAccountPASS)
-	if err != nil {
-		return nil, err
+// LDAP ...
+func LDAP(subjectID string) ([]Response, int, error) {
+
+	// --------------------------------- INIT -------------------------------- //
+	url := os.Getenv("LDAP_API_URL")
+	auth := os.Getenv("LDAP_API_BASIC_AUTH")
+	switch {
+	case url == "":
+		return nil, 0, errors.New("ERROR: LDAP failed to get LDAP_API_URL")
+	case url == "":
+		return nil, 0, errors.New("ERROR: LDAP failed to get LDAP_API_BASIC_AUTH")
 	}
 
-	/*
-		scope ENUMERATED {
-			baseObject              (0),
-			singleLevel             (1),
-			wholeSubtree            (2),
-		},
-		derefAliases ENUMERATED {
-			neverDerefAliases       (0),
-			derefInSearching        (1),
-			derefFindingBaseObj     (2),
-			derefAlways             (3),
-		},
-		DN == Distinguished Name
-		CN == Relative Distinguished Name (RDN)
-		SAMAccountName == Unique Domain Name (logon name)
-		Mail == Email Address
-		MemberOf == Active Directory Groups
-	*/
-
-	// CREATE SEARCH REQUEST
-	result, err := ldapConnection.Search(&ldap.SearchRequest{
-		BaseDN:       "dc=" + baseDomainName + ",dc=com",
-		Scope:        2, // wholeSubtree
-		DerefAliases: 0, // neverDerefAliases
-		SizeLimit:    0,
-		TimeLimit:    0,
-		TypesOnly:    false,
-		Filter:       fmt.Sprintf("(&(objectClass=user)(sAMAccountName=%s))", subjectID),
-		Attributes:   []string{"dn", "cn", "sAMAccountName", "mail", "memberOf"},
-		Controls:     nil,
+	// ------------------------- CREATE REQUEST BODY ------------------------- //
+	// 	NOTE: these fields were determined here:
+	//		https://github.com/go-ldap/ldap/blob/master/examples_test.go
+	requestBody, err := json.Marshal(searchFilter{
+		Filter:     fmt.Sprintf("(&(objectClass=person)(objectClass=user)(userAccountControl=512)(sAMAccountName=%s)(!(objectClass=computer)))", subjectID),
+		Attributes: []string{"dn", "cn", "sAMAccountName", "mail", "memberOf"},
+		SizeLimit:  0,
+		DN:         "DC=Centene,DC=com",
 	})
-
 	if err != nil {
-		return nil, err
+		log.Printf("ERROR: Failed to Marshal searchFilter: %v\n", err.Error())
+		return nil, 0, err
 	}
 
-	response := []Response{}
-
-	// PARSE ENTRIES
-	// NOTE: the number of entries will typically be 1
-	for _, entry := range result.Entries {
-		response = append(response, Response{
-			entry.GetAttributeValue("cn"),
-			entry.GetAttributeValue("sAMAccountName"),
-			entry.GetAttributeValue("mail"),
-			entry.GetAttributeValues("memberOf"),
-		})
+	// ------------------------ REQUEST AND UNMARSHAL ------------------------ //
+	bodyEncoded, statusCode, err := makeAPIRequest("POST", url, requestBody, auth)
+	if err != nil {
+		return nil, statusCode, err
+	}
+	var messageDecoded message
+	err2 := json.Unmarshal(bodyEncoded, &messageDecoded)
+	if err2 != nil {
+		log.Printf("ERROR: failed to unmarshal: %v\n", string(bodyEncoded))
+		return nil, statusCode, err2
 	}
 
-	return response, nil
+	return messageDecoded.Responses, statusCode, nil
 }
 
-// parseMemberOfRoles ...
-func parseMemberOfRoles(arr []Response) ([]string, error) {
+// parseResponseOfMemberOfRoles ...
+func parseResponseOfMemberOfRoles(arr []Response) ([]string, error) {
 	// NOTE: the number of Responses will typically be 1
 	if len(arr) != 1 {
 		return nil, errors.New("ERROR: Length of arrayOfResponses != 1")
@@ -167,37 +129,66 @@ func doesArrayXContainAnyStringsInArrayY(x []string, y []string) []string {
 	return matches
 }
 
-// pingLDAPServer ...
-func pingLDAPServer(serverName string, serviceAccountID string, serviceAccountPASS string, baseDomainName string) error {
-
-	// CREATE CONNECTION
-	ldapConnection, err := ldap.Dial("tcp", fmt.Sprintf("%s:%d", serverName, 389))
-	if err != nil {
-		return err
+// makeAPIRequest ... NOTE: need status code returned!
+func makeAPIRequest(method string, url string, requestBody []byte, auth string) ([]byte, int, error) {
+	var req *http.Request
+	if requestBody != nil {
+		req, _ = http.NewRequest(method, url, bytes.NewBuffer(requestBody))
+	} else {
+		req, _ = http.NewRequest(method, url, nil)
 	}
-	defer ldapConnection.Close()
-
-	// BIND (AUTHORIZED) SERVICE ACCOUNT
-	err = ldapConnection.Bind(serviceAccountID+"@"+baseDomainName+".com", serviceAccountPASS)
+	if auth != "" {
+		req.Header.Add(`Authorization`, `Basic `+auth)
+	}
+	req.Header.Add(`Content-Type`, `application/json`)
+	client := services.NewClient()
+	response, err := client.Do(req)
 	if err != nil {
-		return err
+		return nil, http.StatusInternalServerError, err
+	}
+	defer response.Body.Close()
+	bodyEncoded, err := ioutil.ReadAll(response.Body)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	return bodyEncoded, response.StatusCode, nil
+}
+
+// CustomLDAPSearch ...
+func CustomLDAPSearch(subjectID string) ([]string, int, error) {
+
+	var (
+		acceptedUserGroups = []string{
+			"IT Loyalty & Rewards",
+			"CNC_Loyalty_and_Rewards_Development",
+			"Loyalty_and_Rewards_Manual_Rewards_Portal",
+		}
+	)
+
+	// SEARCH
+	response, statusCode, err := LDAP(subjectID)
+	if err != nil {
+		return nil, statusCode, err
+	}
+	// PARSE ROLES
+	adGroups, err := parseResponseOfMemberOfRoles(response)
+	if err != nil {
+		return nil, 0, err
+	}
+	// FIND MATCHES
+	matches := doesArrayXContainAnyStringsInArrayY(adGroups, acceptedUserGroups)
+	if len(matches) == 0 {
+		return matches, 0, errors.New("No matching AD Groups")
 	}
 
-	// CREATE SEARCH REQUEST
-	_, err = ldapConnection.Search(&ldap.SearchRequest{
-		BaseDN:       "dc=" + baseDomainName + ",dc=com",
-		Scope:        2, // wholeSubtree
-		DerefAliases: 0, // neverDerefAliases
-		SizeLimit:    0,
-		TimeLimit:    0,
-		TypesOnly:    false,
-		Filter:       fmt.Sprintf("(&(objectClass=user)(sAMAccountName=%s))", ""),
-		Attributes:   []string{"dn", "cn", "sAMAccountName", "mail", "memberOf"},
-		Controls:     nil,
-	})
-	if err != nil {
-		return err
-	}
+	return matches, 0, nil
+}
 
-	return nil
+// pingLDAPAPI ...
+func pingLDAPAPI() (int, error) {
+	_, status, err := LDAP("cn111111")
+	if err != nil {
+		return status, errors.New("Failed to Ping LDAP")
+	}
+	return status, nil
 }
