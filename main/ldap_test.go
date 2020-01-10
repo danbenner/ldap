@@ -1,90 +1,57 @@
-package main
+package ldap
 
 import (
-	"os"
 	"reflect"
 	"testing"
 )
 
-func TestLDAP(t *testing.T) {
+func TestLDAPAPI(t *testing.T) {
 	var (
-		serviceAccountID   = os.Getenv("SERVICE_ACCOUNT_ID")
-		serviceAccountPASS = os.Getenv("SERVICE_ACCOUNT_PASS")
-		ldapServerName     = os.Getenv("LDAP_SERVER_NAME")
-		baseDomainName     = "MUST CHANGE"
-		test4r             = []Response{}
-		// r1                 = Response{
-		// 	CN:             "Test",
-		// 	SAMAccountName: "Test test",
-		// 	Mail:           "Ohiouser4.S.Test@bchpohio.com",
-		// 	MemberOf: []string{
-		// 		"CN=a", "CN=b",
-		// 	},
-		// }
-		// test5r = []Response{r1}
+	// test1arr = []Response{}
 	)
 	type args struct {
-		serverName         string
-		serviceAccountID   string
-		serviceAccountPASS string
-		baseDomainName     string
-		subjectID          string
+		subjectID string
 	}
 	tests := []struct {
 		name    string
 		args    args
 		want    []Response
+		want1   int
 		wantErr bool
 	}{
-		{"1", args{
-			serverName: "", serviceAccountID: "", serviceAccountPASS: "", baseDomainName: "", subjectID: "",
-		}, nil, true},
-		{"2", args{
-			serverName: ldapServerName, serviceAccountID: "", serviceAccountPASS: "", baseDomainName: "", subjectID: "",
-		}, nil, true},
-		{"3", args{
-			serverName: ldapServerName, serviceAccountID: serviceAccountID, serviceAccountPASS: serviceAccountPASS, baseDomainName: "", subjectID: "",
-		}, nil, true},
-		{"4", args{
-			serverName: ldapServerName, serviceAccountID: serviceAccountID, serviceAccountPASS: serviceAccountPASS, baseDomainName: baseDomainName, subjectID: "",
-		}, test4r, false},
-		// {"5", args{
-		// 	serverName: ldapServerName, serviceAccountID: serviceAccountID, serviceAccountPASS: serviceAccountPASS, baseDomainName: baseDomainName, subjectID: "test",
-		// }, test5r, false},
+		{"1", args{subjectID: ""}, nil, 500, true},
+		// {"2", args{subjectID: "cn156420"}, nil, 200, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := LDAP(
-				tt.args.serverName,
-				tt.args.serviceAccountID,
-				tt.args.serviceAccountPASS,
-				tt.args.baseDomainName,
-				tt.args.subjectID,
-			)
+			got, got1, err := LDAP(tt.args.subjectID)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("LDAP() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("LDAP() = %v, want %v", got, tt.want)
+				t.Errorf("LDAP() got = %v, want %v", got, tt.want)
+			}
+			if got1 != tt.want1 {
+				t.Errorf("LDAP() got1 = %v, want %v", got1, tt.want1)
 			}
 		})
 	}
 }
 
-func Test_parseMemberOfRoles(t *testing.T) {
+func Test_parseLDAPAPImessageMemberOfRoles(t *testing.T) {
 	var (
 		r1 = Response{
-			CN:             "",
-			SAMAccountName: "",
-			Mail:           "",
-			MemberOf:       []string{"cn=a", "cn=b"},
+			DN:       "",
+			Controls: nil,
+			CN:       "",
+			MemberOf: []string{"cn=a", "cn=b"},
 		}
 		r2 = Response{
-			CN:             "",
-			SAMAccountName: "",
-			Mail:           "",
-			MemberOf:       []string{"cn=b", "cn=c"},
+			DN:       "",
+			Controls: nil,
+			CN:       "",
+			MemberOf: []string{"cn=b", "cn=c"},
 		}
 		test1r = []Response{r1, r2}
 		test2r = []Response{r1}
@@ -104,13 +71,13 @@ func Test_parseMemberOfRoles(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseMemberOfRoles(tt.args.arr)
+			got, err := parseResponseOfMemberOfRoles(tt.args.arr)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("parseMemberOfRoles() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("parseResponseOfMemberOfRoles() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("parseMemberOfRoles() = %v, want %v", got, tt.want)
+				t.Errorf("parseResponseOfMemberOfRoles() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -150,41 +117,45 @@ func Test_doesArrayXContainAnyStringsInArrayY(t *testing.T) {
 	}
 }
 
-func Test_pingLDAPServer(t *testing.T) {
-	var (
-		serviceAccountID   = os.Getenv("SERVICE_ACCOUNT_ID")
-		serviceAccountPASS = os.Getenv("SERVICE_ACCOUNT_PASS")
-		ldapServerName     = os.Getenv("LDAP_SERVER_NAME")
-		baseDomainName     = "MUST CHANGE"
-	)
+func Test_makeAPIRequest(t *testing.T) {
 	type args struct {
-		serverName         string
-		serviceAccountID   string
-		serviceAccountPASS string
-		baseDomainName     string
+		method      string
+		url         string
+		requestBody []byte
+		auth        string
 	}
 	tests := []struct {
 		name    string
 		args    args
+		want    []byte
+		want1   int
 		wantErr bool
 	}{
 		{"1", args{
-			serverName: "", serviceAccountID: "", serviceAccountPASS: "", baseDomainName: "",
-		}, true},
+			method:      "GET",
+			url:         "www.google.com",
+			requestBody: []byte{},
+			auth:        "",
+		}, nil, 500, true},
 		{"2", args{
-			serverName: ldapServerName, serviceAccountID: "", serviceAccountPASS: "", baseDomainName: "",
-		}, true},
-		{"3", args{
-			serverName: ldapServerName, serviceAccountID: serviceAccountID, serviceAccountPASS: serviceAccountPASS, baseDomainName: "",
-		}, true},
-		{"4", args{
-			serverName: ldapServerName, serviceAccountID: serviceAccountID, serviceAccountPASS: serviceAccountPASS, baseDomainName: baseDomainName,
-		}, false},
+			method:      "GET",
+			url:         "www.google.com",
+			requestBody: nil,
+			auth:        "",
+		}, nil, 500, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := pingLDAPServer(tt.args.serverName, tt.args.serviceAccountID, tt.args.serviceAccountPASS, tt.args.baseDomainName); (err != nil) != tt.wantErr {
-				t.Errorf("pingLDAPServer() error = %v, wantErr %v", err, tt.wantErr)
+			got, got1, err := makeAPIRequest(tt.args.method, tt.args.url, tt.args.requestBody, tt.args.auth)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("makeAPIRequest() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("makeAPIRequest() got = %v, want %v", got, tt.want)
+			}
+			if got1 != tt.want1 {
+				t.Errorf("makeAPIRequest() got1 = %v, want %v", got1, tt.want1)
 			}
 		})
 	}
