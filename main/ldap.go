@@ -79,7 +79,7 @@ func LDAP(subjectID string) ([]Response, int, error) {
 		Filter:     fmt.Sprintf("(&(objectClass=person)(objectClass=user)(userAccountControl=512)(sAMAccountName=%s)(!(objectClass=computer)))", subjectID),
 		Attributes: []string{"dn", "cn", "sAMAccountName", "mail", "memberOf"},
 		SizeLimit:  0,
-		DN:         "DC=Centene,DC=com",
+		DN:         "DC=a,DC=com",
 	})
 	if err != nil {
 		log.Printf("ERROR: Failed to Marshal searchFilter: %v\n", err.Error())
@@ -158,9 +158,7 @@ func CustomLDAPSearch(subjectID string) ([]string, int, error) {
 
 	var (
 		acceptedUserGroups = []string{
-			"IT Loyalty & Rewards",
-			"CNC_Loyalty_and_Rewards_Development",
-			"Loyalty_and_Rewards_Manual_Rewards_Portal",
+			"some_user_group",
 		}
 	)
 
@@ -185,7 +183,7 @@ func CustomLDAPSearch(subjectID string) ([]string, int, error) {
 
 // pingLDAPAPI ...
 func pingLDAPAPI() (int, error) {
-	_, status, err := LDAP("cn111111")
+	_, status, err := LDAP("")
 	if err != nil {
 		return status, errors.New("Failed to Ping LDAP")
 	}
